@@ -3,7 +3,8 @@ import io
 import sys
 import time
 import os
-import threading
+import functools
+import threading, thread
 
 def wake_neato():
     dev = "/sys/kernel/debug/gpio_debug/gpio15/"
@@ -20,53 +21,83 @@ def wake_neato():
     print "Pulled gpio down"
     time.sleep(10)
 
+def synchronized(wrapped):
+    lock = threading.RLock()
+    @functools.wraps(wrapped)
+    def _wrapper(*args, **kwargs):
+        with lock:
+            return wrapped(*args, **kwargs)
+        return _wrapper
 
+    
 class Neato(object):
     def __init__(self, port):
         self._uart_connected = False
-        self._uart_lock = threading.Lock()
+        self.lock = threading.Lock()
+        self.status = {}
         for i in range(2):
             try:
                 self.port = serial.Serial(port, timeout=0.1)
                 self._uart_connected = True
-            #self.port = io.TextIOWrapper(io.BufferedRWPair(self._port, self._port), line_buffering=True)
             except:
                 print "Could not open serial port %s" % port
                 self.port = sys.stderr
                 print "Trying to wake neato"
                 wake_neato()
 
+        thread.start_new_thread(self.update_status_loop, ())
 
-        self.command_sinks = [self._serial_write]
+    def update_status_loop(self):
+        loop_time=1
+        print "Starting update loop"
+        while True:
+            start = time.time()
+            self.status = self._GetStatus()
+            wait = 1- (time.time() - start)
+            wait = max(0,wait)
+            #print "Waiting %s" % wait
+            time.sleep(wait)
 
-    def _serial_write(self, cmd):
-        with self._uart_lock:
-            self.port.write(cmd)
-            response = self.port.readlines()
-        return response[1:-1]
+    def _read(self):
+        eof=chr(26)
+        txt = ""
+        while True:
+            bytes_to_read = self.port.inWaiting() or 1
+            data = self.port.read(bytes_to_read)
+            #print "Read %d bytes - got [%s]" % (bytes_to_read, data)
+            if data:
+                txt = txt + data
+                if data[-1] == eof:
+                    #print "Got eof"
+                    return txt
+                else:
+                    pass
+                    #print "Get more data"
+            #else:
+                #print "No data - timeout"
+                #return txt
 
-    def write(self, cmd):
-        #print("Cmd: %s" % cmd)
-        cmd = cmd + "\n"
-        resp = None
-        for sink in self.command_sinks:
-            r = sink(cmd)
-            if r:
-                resp = r
-        return resp
-
+    def do_command(self, cmd):
+        with self.lock:
+            self.port.write(cmd +"\n")
+            response = self._read()
+            response = response.split("\r\n")
+            if response[0] != cmd:
+                print "Response does not match cmd: [%s] != [%s] " %(response[0], cmd)
+            return response[1:-1]
+        
     def GetErr(self):
-        return self.write("GetErr")
+        return self.do_command("GetErr")
 
         
     def GetDigitalSensors(self):
-        response = self.write("GetDigitalSensors")
+        response = self.do_command("GetDigitalSensors")
         response = [a.strip().split(",") for a in response[1:]]
         response = [(a, int(b)) for (a, b) in response]
         return dict(response)
 
     def GetAnalogSensors(self):
-        response = self.write("GetAnalogSensors")
+        response = self.do_command("GetAnalogSensors")
         response = [a.strip().split(",") for a in response[1:]]
         formatted = []
         for line in response:
@@ -79,23 +110,23 @@ class Neato(object):
         return dict(formatted)
 
     def GetAccel(self):
-        response = self.write("GetAccel")
+        response = self.do_command("GetAccel")
         response = [a.strip().split(",") for a in response[1:]]
         response = [(a, float(b)) for (a, b) in response]
         return dict(response)
 
     def GetMotors(self):
-        response = self.write("GetMotors")
+        response = self.do_command("GetMotors")
         response = [a.strip().split(",") for a in response[1:]]
         response = [(a, int(b)) for (a, b) in response]
         return dict(response)
 
     
     def SetLDSRotation(self, value):
-        return self.write("SetLDSRotation %s" % ("On" if value else "Off"))
+        return self.do_command("SetLDSRotation %s" % ("On" if value else "Off"))
     
     def GetLDSScan(self):
-        raw = self.write("GetLDSScan")
+        raw = self.do_command("GetLDSScan")
         lines = raw.split("\r\n")
         values = []
         for line in lines:
@@ -112,7 +143,7 @@ class Neato(object):
         
     def TestMode(self, value):
         txt = "TestMode %s" % ("On" if value else "Off")
-        print self.write(txt)
+        self.do_command(txt)
 
 
     def Clean(self, arg=None):
@@ -122,41 +153,50 @@ class Neato(object):
         cmd = "Clean %s" % (arg or "")
 
     def PlaySound(self, sound):
-        self.write("PlaySound %d" % sound)
-        
-    def SetMotor(self, LWheelDist = 0, RWheelDist = 0, Speed = 0, Accel = 0, RPM = 0):
+        self.do_command("PlaySound %d" % sound)
+
+    def SetMotor(self, *args, **kwargs):
+        return self.SmartDrive(*args, **kwargs)
+
+    def _SetMotor(self, LWheelDist = 0, RWheelDist = 0, Speed = 0, Accel = 0, RPM = 0):
         self.TestMode(True)
+        self.TestMode(True)
+
         if LWheelDist != 0 or RWheelDist != 0:
             if Speed == 0:
                 Speed = 100
             if Accel == 0:
                 Accel = Speed
         txt = "SetMotor LWheelDist %d RWheelDist %d Speed %d Accel %d RPM %d" % (LWheelDist, RWheelDist, Speed, Accel, RPM)
-        response = self.write(txt)
-        self.TestMode(False)
+        response = self.do_command(txt)
+        print txt, response
         return response
 
     def SmartDrive(self, LWheelDist = 0, RWheelDist = 0, Speed = 0, Accel = 0, RPM = 0):
         exp_time = max(abs(LWheelDist), abs(RWheelDist)) / 100
         print "Expecting to drive for %d sec" % exp_time
         start = time.time()
-        self.SetMotor(LWheelDist, RWheelDist, Speed, Accel, RPM)
+        self._SetMotor(LWheelDist, RWheelDist, Speed, Accel, RPM)
         while time.time() < (start + exp_time):
-            sensors = self.GetDigitalSensors()
-            if "1" in sensors.values():
+            sensors = self.GetStatus()["sensors"]
+            if 1 in sensors.values():
                 print "Stopping! %s" % sensors
-                self.SetMotor(0,0,0)
+                self.TestMode(False)
                 return
+            time.sleep(0.1)
             
         
-        
     def GetStatus(self):
+        return self.status
+
+
+    def _GetStatus(self):
         status = dict(error=self.GetErr(),
                       sensors=self.GetDigitalSensors(),
                       analog=self.GetAnalogSensors(),
                       motors=self.GetMotors(),
                       accel=self.GetAccel(),
-                  )
+        )
         
         return status
                             
@@ -164,12 +204,12 @@ class Neato(object):
 class NeatoDummy(Neato):
     def __init__(self):
         print "This is a dummy Neato class"
-        self.command_sinks = [self.debug]
-
-    def debug(self, txt):
+        thread.start_new_thread(self.update_status_loop, ())
+        
+    def do_command(self, txt):
         print("UART Write: [%s]" % txt)
 
-    def GetStatus(self):
+    def _GetStatus(self):
         s = {'accel': {'PitchInDegrees': 0.050000000000000003,
                     'RollInDegrees': 1.4299999999999999,
                     'SumInG': 0.97299999999999998,

@@ -21,17 +21,9 @@ def wake_neato():
     print "Pulled gpio down"
     time.sleep(10)
 
-def synchronized(wrapped):
-    lock = threading.RLock()
-    @functools.wraps(wrapped)
-    def _wrapper(*args, **kwargs):
-        with lock:
-            return wrapped(*args, **kwargs)
-        return _wrapper
-
     
 class Neato(object):
-    def __init__(self, port):
+    def __init__(self, port, update_loop=True):
         self._uart_connected = False
         self.lock = threading.Lock()
         self.status = {}
@@ -45,7 +37,8 @@ class Neato(object):
                 print "Trying to wake neato"
                 wake_neato()
 
-        thread.start_new_thread(self.update_status_loop, ())
+        if update_loop:
+            thread.start_new_thread(self.update_status_loop, ())
 
     def update_status_loop(self):
         loop_time=1
@@ -104,7 +97,8 @@ class Neato(object):
             try:
                 name, unit, value, _ = line
                 value = int(value)
-                formatted.append(("%s [%s]" %(name, unit), value))
+                formatted.append((name, unit))
+                #formatted.append(("%s [%s]" %(name, unit), value))
             except:
                 print "Could not parse %s" % line
         return dict(formatted)
@@ -126,10 +120,14 @@ class Neato(object):
         return self.do_command("SetLDSRotation %s" % ("On" if value else "Off"))
     
     def GetLDSScan(self):
-        raw = self.do_command("GetLDSScan")
-        lines = raw.split("\r\n")
+        lines = self.do_command("GetLDSScan")
         values = []
-        for line in lines:
+        expected_line_count=362
+        if len(lines) != expected_line_count:
+            print "Expected %s lines, got %s" % (expected_line_count, len(lines))
+            return []
+        
+        for line in lines[1:-1]:
             try:
                 deg, dist, intensity, errorcode = line.split(",")
                 deg = int(deg)
@@ -140,7 +138,8 @@ class Neato(object):
             except:
                 print "Could not parse... ", line
         return values
-        
+
+
     def TestMode(self, value):
         txt = "TestMode %s" % ("On" if value else "Off")
         self.do_command(txt)
@@ -196,6 +195,7 @@ class Neato(object):
                       analog=self.GetAnalogSensors(),
                       motors=self.GetMotors(),
                       accel=self.GetAccel(),
+                      lds=self.GetLDSScan()
         )
         
         return status
@@ -216,20 +216,20 @@ class NeatoDummy(Neato):
                     'XInG': -0.001,
                     'YInG': 0.024,
                     'ZInG': 0.97299999999999998},
-          'analog': {'AccelerometerX [mG]': -6,
-                     'AccelerometerY [mG]': 21,
-                     'AccelerometerZ [mG]': 977,
-                     'BatteryCurrent [mA]': -155,
-                     'BatteryTemperature [mC]': 26063,
-                     'BatteryVoltage [mV]': 12704,
-                     'DropSensorLeft [mm]': 0,
-                     'DropSensorRight [mm]': 0,
-                     'ExternalVoltage [mV]': 17988,
-                     'MagSensorLeft [VAL]': 0,
-                     'MagSensorRight [VAL]': 0,
-                     'SideBrushCurrent [mA]': 0,
-                     'VacuumCurrent [mA]': 0,
-                     'WallSensor [mm]': 70},
+          'analog': {'AccelerometerX': -6,
+                     'AccelerometerY': 21,
+                     'AccelerometerZ': 977,
+                     'BatteryCurrent': -155,
+                     'BatteryTemperature': 26063,
+                     'BatteryVoltage': 12704,
+                     'DropSensorLeft': 0,
+                     'DropSensorRight': 0,
+                     'ExternalVoltage': 17988,
+                     'MagSensorLeft': 0,
+                     'MagSensorRight': 0,
+                     'SideBrushCurrent': 0,
+                     'VacuumCurrent': 0,
+                     'WallSensor': 70},
           'error': ['\r\n'],
           'motors': {'Brush_RPM': 0,
                      'Brush_mA': 0,

@@ -39,9 +39,13 @@ class SweetoClient:
             time.sleep(self.update_interval)
 
 
+    def debug(self, txt, dest="neato/status"):
+        msg = json.dumps(dict(debug=txt))
+        self.client.publish(dest, msg)
+            
     def on_connect(self, client, userdata, flags, rc):
         print("Connected with result code "+str(rc))
-        client.publish("neato/status", "Hello from %s" % platform.uname()[1])
+        self.debug("Hello from %s" % platform.uname()[1])
         print("Posted hello msg")
         client.subscribe("neato/commands")
 

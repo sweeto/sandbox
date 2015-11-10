@@ -264,7 +264,7 @@ class NeatoDummy(Neato):
                       'SNSR_DUSTBIN_IS_IN': 0,
                       'SNSR_LEFT_WHEEL_EXTENDED': 0,
                       'SNSR_RIGHT_WHEEL_EXTENDED': 0},
-             "lds":[[i, 10, 0] for i in range(360)]
+             "lds":[[i, 10, 32, 0] for i in range(360)]
 
         }
         return s

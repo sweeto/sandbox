@@ -24,9 +24,11 @@ def wake_neato():
     
 class Neato(object):
     def __init__(self, port, update_loop=True):
+        self._debug_uart = False
         self._uart_connected = False
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.status = {}
+        self.testmode = False
         for i in range(2):
             try:
                 self.port = serial.Serial(port, timeout=0.1)
@@ -39,13 +41,16 @@ class Neato(object):
 
         if update_loop:
             thread.start_new_thread(self.update_status_loop, ())
+        else:
+            # Make sure we initialize the status stuff
+            self._UpdateStatus()
 
     def update_status_loop(self):
         loop_time=1
         print "Starting update loop"
         while True:
             start = time.time()
-            self.status = self._GetStatus()
+            self._UpdateStatus()
             wait = 1- (time.time() - start)
             wait = max(0,wait)
             #print "Waiting %s" % wait
@@ -70,19 +75,38 @@ class Neato(object):
                 #print "No data - timeout"
                 #return txt
 
-    def do_command(self, cmd):
+    def do_command(self, cmd, requires_testmode=False):
         with self.lock:
+            if requires_testmode and not self.testmode:
+                print "Setting testmode"
+                self.TestMode(True)
+
+            if self._debug_uart:
+                print "UART => %s" % cmd
             self.port.write(cmd +"\n")
+
             response = self._read()
             response = response.split("\r\n")
+            if self._debug_uart:
+                for i in response:
+                    print "UART <= %s" % i
+
             if response[0] != cmd:
                 print "Response does not match cmd: [%s] != [%s] " %(response[0], cmd)
+            if response[1] == 'TestMode must be on to use this command.':
+                self.testmode = False
+                return self.do_command(cmd, True)
             return response[1:-1]
         
     def GetErr(self):
         return self.do_command("GetErr")
 
-        
+    def GetCharger(self):
+        response = self.do_command("GetCharger")
+        response = [a.strip().split(",") for a in response[1:]]
+        response = [(a, eval(b)) for (a, b) in response]
+        return dict(response)
+
     def GetDigitalSensors(self):
         response = self.do_command("GetDigitalSensors")
         response = [a.strip().split(",") for a in response[1:]]
@@ -97,7 +121,7 @@ class Neato(object):
             try:
                 name, unit, value, _ = line
                 value = int(value)
-                formatted.append((name, unit))
+                formatted.append((name, value))
             except:
                 print "Could not parse %s" % line
         return dict(formatted)
@@ -116,7 +140,8 @@ class Neato(object):
 
     
     def SetLDSRotation(self, value):
-        return self.do_command("SetLDSRotation %s" % ("On" if value else "Off"))
+        cmd = "SetLDSRotation %s" % ("On" if value else "Off")
+        return self.do_command(cmd, True)
     
     def GetLDSScan(self):
         lines = self.do_command("GetLDSScan")
@@ -140,6 +165,7 @@ class Neato(object):
 
 
     def TestMode(self, value):
+        self.testmode=value
         txt = "TestMode %s" % ("On" if value else "Off")
         self.do_command(txt)
 
@@ -157,20 +183,16 @@ class Neato(object):
         return self.SmartDrive(*args, **kwargs)
 
     def _SetMotor(self, LWheelDist = 0, RWheelDist = 0, Speed = 0, Accel = 0, RPM = 0):
-        self.TestMode(True)
-        self.TestMode(True)
-
-        if LWheelDist != 0 or RWheelDist != 0:
-            if Speed == 0:
-                Speed = 100
-            if Accel == 0:
-                Accel = Speed
         txt = "SetMotor LWheelDist %d RWheelDist %d Speed %d Accel %d RPM %d" % (LWheelDist, RWheelDist, Speed, Accel, RPM)
-        response = self.do_command(txt)
+        response = self.do_command(txt, True)
         print txt, response
         return response
 
-    def SmartDrive(self, LWheelDist = 0, RWheelDist = 0, Speed = 0, Accel = 0, RPM = 0):
+
+    def Stop(self):
+        self.TestMode(False)
+
+    def Drive(self, LWheelDist = 0, RWheelDist = 0, Speed = 0, Accel = 0, RPM = 0):
         _watch_sensors = [("sensors",'LFRONTBIT'),
                           ("sensors",'LLDSBIT'),
                           ("sensors",'LSIDEBIT'),
@@ -179,8 +201,15 @@ class Neato(object):
                           ("sensors",'RSIDEBIT'),
                           ("analog", 'DropSensorLeft'),
                           ("analog", 'DropSensorRight')]
+        Speed = min(Speed, 350)
 
-        exp_time = max(abs(LWheelDist), abs(RWheelDist)) / speed
+        if LWheelDist != 0 or RWheelDist != 0:
+            if Speed == 0:
+                Speed = 100
+            if Accel == 0:
+                Accel = Speed
+
+        exp_time = max(abs(LWheelDist), abs(RWheelDist)) / Speed
         print "Expecting to drive for %f sec" % exp_time
         start = time.time()
         self._SetMotor(LWheelDist, RWheelDist, Speed, Accel, RPM)
@@ -189,9 +218,9 @@ class Neato(object):
             for group, sensor in _watch_sensors:
                 value = status[group][sensor]
                 if value > 0:
-                    msg = "Stopping! Sensor %s = %d" % (sensor, value)
+                    msg = "Stopping! Sensor %s = %s" % (sensor, value)
                     print msg
-                    self.TestMode(False)
+                    self.Stop()
                     return msg
             time.sleep(0.1)
             
@@ -200,15 +229,17 @@ class Neato(object):
         return self.status
 
 
-    def _GetStatus(self):
-        status = dict(error=self.GetErr(),
-                      sensors=self.GetDigitalSensors(),
-                      analog=self.GetAnalogSensors(),
-                      motors=self.GetMotors(),
+    def _UpdateStatus(self):
+        self.status = dict(error=self.GetErr(),
+                           sensors=self.GetDigitalSensors(),
+                           analog=self.GetAnalogSensors(),
+                           motors=self.GetMotors(),
+                           charger=self.GetCharger(),
                       #accel=self.GetAccel(),
-                      lds=self.GetLDSScan()
-        )
-        return status
+                           lds=self.GetLDSScan(),
+                           updated=time.time(),
+                       )
+        return self.status
                             
 
 class NeatoDummy(Neato):

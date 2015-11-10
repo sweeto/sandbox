@@ -6,7 +6,7 @@ import platform
 import argparse
 
 payload = """
-{"cmd":"SetMotor",
+{"cmd":"SafeMotor",
 "args":{"LWheelDist":300,
 "RWheelDist":300,
 "Speed":100,
@@ -27,6 +27,7 @@ class SweetoClient:
             self.neato = neato.NeatoDummy()
         else:
             self.neato = neato.Neato(neato_serial_port)
+            self.neato.SetLDSRotation(True)
         self.client.connect(server_address, server_port, 60)
 
     def run(self):
@@ -51,6 +52,7 @@ class SweetoClient:
 
 
     def on_message(self, client, userdata, msg):
+        print "Msg payload: [%s]" % msg.payload
         try:
             obj = json.loads(msg.payload)
         except ValueError:
@@ -58,6 +60,7 @@ class SweetoClient:
             return
         cmd = obj.get("cmd")
         args = obj.get("args", {})
+        print cmd, args
         func = getattr(self.neato, cmd)
         if func:
             func(**args)

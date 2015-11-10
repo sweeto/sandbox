@@ -98,7 +98,6 @@ class Neato(object):
                 name, unit, value, _ = line
                 value = int(value)
                 formatted.append((name, unit))
-                #formatted.append(("%s [%s]" %(name, unit), value))
             except:
                 print "Could not parse %s" % line
         return dict(formatted)
@@ -172,16 +171,28 @@ class Neato(object):
         return response
 
     def SmartDrive(self, LWheelDist = 0, RWheelDist = 0, Speed = 0, Accel = 0, RPM = 0):
-        exp_time = max(abs(LWheelDist), abs(RWheelDist)) / 100
-        print "Expecting to drive for %d sec" % exp_time
+        _watch_sensors = [("sensors",'LFRONTBIT'),
+                          ("sensors",'LLDSBIT'),
+                          ("sensors",'LSIDEBIT'),
+                          ("sensors",'RFRONTBIT'),
+                          ("sensors",'RLDSBIT'),
+                          ("sensors",'RSIDEBIT'),
+                          ("analog", 'DropSensorLeft'),
+                          ("analog", 'DropSensorRight')]
+
+        exp_time = max(abs(LWheelDist), abs(RWheelDist)) / speed
+        print "Expecting to drive for %f sec" % exp_time
         start = time.time()
         self._SetMotor(LWheelDist, RWheelDist, Speed, Accel, RPM)
         while time.time() < (start + exp_time):
-            sensors = self.GetStatus()["sensors"]
-            if 1 in sensors.values():
-                print "Stopping! %s" % sensors
-                self.TestMode(False)
-                return
+            status = self.GetStatus()
+            for group, sensor in _watch_sensors:
+                value = status[group][sensor]
+                if value > 0:
+                    msg = "Stopping! Sensor %s = %d" % (sensor, value)
+                    print msg
+                    self.TestMode(False)
+                    return msg
             time.sleep(0.1)
             
         
@@ -194,10 +205,9 @@ class Neato(object):
                       sensors=self.GetDigitalSensors(),
                       analog=self.GetAnalogSensors(),
                       motors=self.GetMotors(),
-                      accel=self.GetAccel(),
+                      #accel=self.GetAccel(),
                       lds=self.GetLDSScan()
         )
-        
         return status
                             
 
@@ -253,7 +263,10 @@ class NeatoDummy(Neato):
                       'SNSR_DC_JACK_IS_IN': 0,
                       'SNSR_DUSTBIN_IS_IN': 0,
                       'SNSR_LEFT_WHEEL_EXTENDED': 0,
-                      'SNSR_RIGHT_WHEEL_EXTENDED': 0}}
+                      'SNSR_RIGHT_WHEEL_EXTENDED': 0},
+             "lds":[[i, 10, 0] for i in range(360)]
+
+        }
         return s
 
         

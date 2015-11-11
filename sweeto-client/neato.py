@@ -1,8 +1,8 @@
 import serial
-import io
 import sys
 import time
 import os
+import json
 import functools
 import threading, thread
 
@@ -243,61 +243,20 @@ class Neato(object):
                             
 
 class NeatoDummy(Neato):
-    def __init__(self):
+    def __init__(self, dump_file):
         print "This is a dummy Neato class"
+        with open(dump_file) as fd:
+            self._status_history = json.load(fd)
+
+        self._current_item = 0
         thread.start_new_thread(self.update_status_loop, ())
-        
+
     def do_command(self, txt):
         print("UART Write: [%s]" % txt)
 
-    def _GetStatus(self):
-        s = {'accel': {'PitchInDegrees': 0.050000000000000003,
-                    'RollInDegrees': 1.4299999999999999,
-                    'SumInG': 0.97299999999999998,
-                    'XInG': -0.001,
-                    'YInG': 0.024,
-                    'ZInG': 0.97299999999999998},
-          'analog': {'AccelerometerX': -6,
-                     'AccelerometerY': 21,
-                     'AccelerometerZ': 977,
-                     'BatteryCurrent': -155,
-                     'BatteryTemperature': 26063,
-                     'BatteryVoltage': 12704,
-                     'DropSensorLeft': 0,
-                     'DropSensorRight': 0,
-                     'ExternalVoltage': 17988,
-                     'MagSensorLeft': 0,
-                     'MagSensorRight': 0,
-                     'SideBrushCurrent': 0,
-                     'VacuumCurrent': 0,
-                     'WallSensor': 70},
-          'error': ['\r\n'],
-          'motors': {'Brush_RPM': 0,
-                     'Brush_mA': 0,
-                     'LeftWheel_Load%': 0,
-                     'LeftWheel_PositionInMM': 0,
-                     'LeftWheel_RPM': 0,
-                     'LeftWheel_Speed': 0,
-                     'RightWheel_Load%': 0,
-                     'RightWheel_PositionInMM': 0,
-                     'RightWheel_RPM': 0,
-                     'RightWheel_Speed': 0,
-                     'SideBrush_mA': 0,
-                     'Vacuum_RPM': 0,
-                     'Vacuum_mA': 0},
-          'sensors': {'LFRONTBIT': 0,
-                      'LLDSBIT': 0,
-                      'LSIDEBIT': 0,
-                      'RFRONTBIT': 0,
-                      'RLDSBIT': 0,
-                      'RSIDEBIT': 0,
-                      'SNSR_DC_JACK_IS_IN': 0,
-                      'SNSR_DUSTBIN_IS_IN': 0,
-                      'SNSR_LEFT_WHEEL_EXTENDED': 0,
-                      'SNSR_RIGHT_WHEEL_EXTENDED': 0},
-             "lds":[[i, 10, 32, 0] for i in range(360)]
+    def _UpdateStatus(self):
+        self.status = self._status_history[self._current_item]
+        self._current_item = (self._current_item + 1) % len(self._status_history)
 
-        }
-        return s
 
         

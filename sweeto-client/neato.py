@@ -5,9 +5,11 @@ import os
 import json
 import functools
 import threading, thread
+import math
 
 def wake_neato():
-    dev = "/sys/kernel/debug/gpio_debug/gpio15/"
+    #dev = "/sys/kernel/debug/gpio_debug/gpio15/"
+    dev = "/sys/kernel/debug/gpio_debug/gpio165/"
     if not os.path.isdir(dev):
         print "No gpio here"
         return
@@ -20,6 +22,7 @@ def wake_neato():
         fd.write("in")
     print "Pulled gpio down"
     time.sleep(10)
+
 
     
 class Neato(object):
@@ -126,6 +129,13 @@ class Neato(object):
                 print "Could not parse %s" % line
         return dict(formatted)
 
+    def Turn(self, deg):
+        wheel_dist = 244
+        rad = -deg * math.pi / 180
+        lw = wheel_dist / 2 * rad
+        rw = -lw
+        self._SetMotor(lw, rw, 100)
+
     def GetAccel(self):
         response = self.do_command("GetAccel")
         response = [a.strip().split(",") for a in response[1:]]
@@ -174,7 +184,9 @@ class Neato(object):
         valid_args=[None, "House", "Spot", "Stop"]
         if arg not in valid_args:
             raise Exception("Received unexpected argument: %s, expected one of %s" % (arg, valid_args))
+        self.TestMode(False)
         cmd = "Clean %s" % (arg or "")
+        return self.do_command(cmd)
 
     def PlaySound(self, sound):
         self.do_command("PlaySound %d" % sound)
@@ -191,6 +203,12 @@ class Neato(object):
 
     def Stop(self):
         self.TestMode(False)
+
+
+    def BackToDock(self):
+        while self._UpdateStatus()["charger"]["ExtPwrPresent"] == 0:
+            self._SetMotor(-5, -5, 20)
+            time.sleep(0.5)
 
     def Drive(self, LWheelDist = 0, RWheelDist = 0, Speed = 0, Accel = 0, RPM = 0):
         _watch_sensors = [("sensors",'LFRONTBIT'),
@@ -228,7 +246,6 @@ class Neato(object):
     def GetStatus(self):
         return self.status
 
-
     def _UpdateStatus(self):
         self.status = dict(error=self.GetErr(),
                            sensors=self.GetDigitalSensors(),
@@ -239,8 +256,13 @@ class Neato(object):
                            lds=self.GetLDSScan(),
                            updated=time.time(),
                        )
+        state = "Idle"
+        if self.status["charger"]["ExtPwrPresent"]:
+            state = "Docked"
+        if self.status["motors"]["Vacuum_RPM"] and self.status["motors"]["Brush_RPM"]:
+            state = "Cleaning"
+        self.status["state"] = state
         return self.status
-                            
 
 class NeatoDummy(Neato):
     def __init__(self, dump_file):
@@ -249,6 +271,7 @@ class NeatoDummy(Neato):
             self._status_history = json.load(fd)
 
         self._current_item = 0
+        self._UpdateStatus()
         thread.start_new_thread(self.update_status_loop, ())
 
     def do_command(self, txt):

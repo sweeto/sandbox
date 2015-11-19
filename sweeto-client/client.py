@@ -16,6 +16,7 @@ payload = """
 }
 """
 
+
 class SweetoClient:
     def __init__(self, server_address, server_port, username, password, neato_serial_port, update_interval, dump_file, replay_file):
         self.update_interval=update_interval
@@ -32,16 +33,21 @@ class SweetoClient:
         self.client.connect(server_address, server_port, 60)
 
     def run(self):
-        
         self.client.loop_start()
         history = []
         while True:
+            max_hist = 120
             status = self.neato.GetStatus()
+            if not status:
+                continue
             self.client.publish("neato/status", json.dumps(status))
-            if self.dump_file:
+            print "Posted status update with timestamp=%s, keys=%s" % (status.get("updated"), status.keys())
+            if self.dump_file and len(history) <= max_hist:
                 history.append(status)
-                with open(self.dump_file, "w") as fd:
-                    json.dump(history, fd, indent=2)
+                if len(history) == max_hist:
+                    print "Dumping status to %s" % self.dump_file
+                    with open(self.dump_file, "w") as fd:
+                        json.dump(history, fd, indent=2)
                 
             time.sleep(self.update_interval)
 

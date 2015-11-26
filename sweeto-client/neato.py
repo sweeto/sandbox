@@ -152,6 +152,22 @@ class Neato(object):
     def SetLDSRotation(self, value):
         cmd = "SetLDSRotation %s" % ("On" if value else "Off")
         return self.do_command(cmd, True)
+
+
+    def _ParseSchedule(self, txt):
+        active = txt[0] == "Schedule is Enabled"
+        days = {}
+        for line in txt[1:]:
+            day, time, what = line.split(" ", 2)
+            days[day] =  time if what == "H" else None
+
+        days["active"] = active
+        return days
+
+    def GetSchedule(self):
+        response = self.do_command("GetSchedule")
+        schedule = self._ParseSchedule(response)
+        return schedule
     
     def GetLDSScan(self):
         lines = self.do_command("GetLDSScan")

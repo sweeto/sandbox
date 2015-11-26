@@ -4,6 +4,7 @@ import json
 import time
 import platform
 import argparse
+import atexit
 
 payload = """
 {"cmd":"SafeMotor",
@@ -32,10 +33,12 @@ class SweetoClient:
             self.neato.SetLDSRotation(True)
         self.client.connect(server_address, server_port, 60)
 
+        
     def run(self):
         self.client.loop_start()
+        self._running = True
         history = []
-        while True:
+        while self._running:
             max_hist = 120
             status = self.neato.GetStatus()
             if not status:
@@ -51,8 +54,13 @@ class SweetoClient:
                 
             time.sleep(self.update_interval)
 
+    def stop(self):
+        print "Exiting..."
+        self._running = False
+        self.neato.TestMode(False)
+        
 
-    def debug(self, txt, dest="neato/status"):
+    def debug(self, txt, dest="neato/debug"):
         msg = json.dumps(dict(debug=txt))
         self.client.publish(dest, msg)
             
@@ -102,5 +110,6 @@ if __name__ == "__main__":
     client = SweetoClient(args.server_address, args.server_port,
                           args.username, args.password, args.neato_serial_port, args.update_interval, args.dump_data,
                           args.replay_data)
+    atexit.register(client.stop)
     client.run()
     

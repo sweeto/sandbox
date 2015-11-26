@@ -274,7 +274,7 @@ class NeatoDummy(Neato):
         self._UpdateStatus()
         thread.start_new_thread(self.update_status_loop, ())
 
-    def do_command(self, txt):
+    def do_command(self, txt, *args):
         print("UART Write: [%s]" % txt)
 
     def _UpdateStatus(self):

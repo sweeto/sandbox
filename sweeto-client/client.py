@@ -30,7 +30,7 @@ class SweetoClient:
             self.neato = neato.NeatoDummy(replay_file)
         else:
             self.neato = neato.Neato(neato_serial_port)
-            self.neato.SetLDSRotation(True)
+            #self.neato.SetLDSRotation(True)
         self.client.connect(server_address, server_port, 60)
 
         
@@ -40,7 +40,13 @@ class SweetoClient:
         history = []
         while self._running:
             max_hist = 120
-            status = self.neato.GetStatus()
+            try:
+                status = self.neato.GetStatus()
+            except Exception, e:
+                print "Failed to get neato status: %s" % e
+                time.sleep(self.update_interval)
+                continue
+            
             if not status:
                 continue
             self.client.publish("neato/status", json.dumps(status))
@@ -79,11 +85,15 @@ class SweetoClient:
             print("Could not decode json")
             return
         cmd = obj.get("cmd")
-        args = obj.get("args", {})
-        print cmd, args
+        args = obj.get("args", [])
+        kwargs = obj.get("kwargs", {})
+        print cmd, args, kwargs
         func = getattr(self.neato, cmd)
         if func:
-            func(**args)
+            try:
+                func(*args, **kwargs)
+            except Exception, e:
+                print "Failed to run '%s(%s): %s'" % (cmd, args, e)
         else:
             print "Could not run %s" % cmd
     

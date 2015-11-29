@@ -32,6 +32,8 @@ class Neato(object):
         self.lock = threading.RLock()
         self.status = {}
         self.testmode = False
+        self._last_command = 0
+        self._hibernated = 0
         for i in range(2):
             try:
                 self.port = serial.Serial(port, timeout=0.1)
@@ -80,6 +82,7 @@ class Neato(object):
 
     def do_command(self, cmd, requires_testmode=False):
         with self.lock:
+            self._last_command = time.time()
             if requires_testmode and not self.testmode:
                 print "Setting testmode"
                 self.TestMode(True)
@@ -153,19 +156,27 @@ class Neato(object):
         cmd = "SetLDSRotation %s" % ("On" if value else "Off")
         return self.do_command(cmd, True)
 
-
     def _ParseSchedule(self, txt):
         active = txt[0] == "Schedule is Enabled"
-        days = {}
+        days = []
         for line in txt[1:]:
             day, time, what = line.split(" ", 2)
-            days[day] =  time if what == "H" else None
+            days.append(dict(day=day,
+                             time = time if what == "H" else None))
 
-        days["active"] = active
-        return days
+        return dict(days=days,
+                    active=active)
 
     def GetSchedule(self):
         response = self.do_command("GetSchedule")
+        schedule = self._ParseSchedule(response)
+        return schedule
+
+    def SetSchedule(self, **kwargs):
+        if "active" in kwargs:
+            arg = "ON" if kwargs.get("active") else "OFF"
+            response = self.do_command("SetSchedule %s" % arg)
+
         schedule = self._ParseSchedule(response)
         return schedule
     
@@ -202,7 +213,19 @@ class Neato(object):
             raise Exception("Received unexpected argument: %s, expected one of %s" % (arg, valid_args))
         self.TestMode(False)
         cmd = "Clean %s" % (arg or "")
-        return self.do_command(cmd)
+        response = self.do_command(cmd)
+        # Cleaning Mode(CD): 1
+        if arg != "Stop":
+            for i in range(2):
+                for j in range(5):
+                    status = self.GetStatus(True)
+                    state = status.get("state")
+                    print "State: %s" % state
+                    if state == "Cleaning":
+                        return response
+                    time.sleep(1)
+                print "Trying once more..."
+                return self.do_command(cmd)
 
     def PlaySound(self, sound):
         self.do_command("PlaySound %d" % sound)
@@ -216,10 +239,8 @@ class Neato(object):
         print txt, response
         return response
 
-
     def Stop(self):
         self.TestMode(False)
-
 
     def BackToDock(self):
         while self._UpdateStatus()["charger"]["ExtPwrPresent"] == 0:
@@ -257,27 +278,45 @@ class Neato(object):
                     self.Stop()
                     return msg
             time.sleep(0.1)
+
+    def Hibernate(self):
+        self._hibernated = time.time()
+        return self.do_command("SetSystemMode Hibernate")
             
-        
-    def GetStatus(self):
+    def GetStatus(self, force_update=False):
+        if force_update:
+            return self._UpdateStatus()
         return self.status
 
+    def HibernateIfNeeded(self):
+        if self.status.get("state") not in ["Docked", "Idle"]:
+            return
+        if (self._last_command - self._hibernated) > 120:
+            print "Hibernating..., state=%s" % self.status.get("state")
+            self.Hibernate()
+
     def _UpdateStatus(self):
-        self.status = dict(error=self.GetErr(),
-                           sensors=self.GetDigitalSensors(),
-                           analog=self.GetAnalogSensors(),
-                           motors=self.GetMotors(),
-                           charger=self.GetCharger(),
+        update = dict(error=self.GetErr(),
+                      sensors=self.GetDigitalSensors(),
+                      analog=self.GetAnalogSensors(),
+                      motors=self.GetMotors(),
+                      charger=self.GetCharger(),
+                      schedule=self.GetSchedule(),
                       #accel=self.GetAccel(),
-                           lds=self.GetLDSScan(),
-                           updated=time.time(),
-                       )
+                      lds=self.GetLDSScan(),
+                      updated=time.time(),
+        )
+        self.status.update(update)
         state = "Idle"
         if self.status["charger"]["ExtPwrPresent"]:
             state = "Docked"
-        if self.status["motors"]["Vacuum_RPM"] and self.status["motors"]["Brush_RPM"]:
+        motors = self.status["motors"]
+        if motors["Vacuum_RPM"] or motors["Brush_RPM"]:
             state = "Cleaning"
+        if motors['LeftWheel_Speed'] or motors['RightWheel_Speed']:
+            state = "Driving"
         self.status["state"] = state
+        self.HibernateIfNeeded()
         return self.status
 
 class NeatoDummy(Neato):

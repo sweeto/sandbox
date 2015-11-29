@@ -29,7 +29,7 @@ class SweetoClient:
         if neato_serial_port is None:
             self.neato = neato.NeatoDummy(replay_file)
         else:
-            self.neato = neato.Neato(neato_serial_port)
+            self.neato = neato.Neato(neato_serial_port, False)
             #self.neato.SetLDSRotation(True)
         self.client.connect(server_address, server_port, 60)
 
@@ -40,17 +40,7 @@ class SweetoClient:
         history = []
         while self._running:
             max_hist = 120
-            try:
-                status = self.neato.GetStatus()
-            except Exception, e:
-                print "Failed to get neato status: %s" % e
-                time.sleep(self.update_interval)
-                continue
-            
-            if not status:
-                continue
-            self.client.publish("neato/status", json.dumps(status))
-            print "Posted status update with timestamp=%s, keys=%s" % (status.get("updated"), status.keys())
+            self.update()
             if self.dump_file and len(history) <= max_hist:
                 history.append(status)
                 if len(history) == max_hist:
@@ -59,6 +49,20 @@ class SweetoClient:
                         json.dump(history, fd, indent=2)
                 
             time.sleep(self.update_interval)
+
+    def update(self, add_status=None):
+        try:
+            status = self.neato._UpdateStatus()
+        except Exception, e:
+            print "Failed to get neato status: %s" % e
+            return
+        if not status:
+            return
+        self.client.publish("neato/status", json.dumps(status))
+        ts, state, err = status.get("updated"), status.get("state"), status.get("error")
+        print "[%s] Posted update: State:'%s' Error: '%s'" % (time.strftime("%H:%M:%S", time.localtime(ts)),
+                                                              state, err)
+        return status
 
     def stop(self):
         print "Exiting..."
@@ -91,7 +95,10 @@ class SweetoClient:
         func = getattr(self.neato, cmd)
         if func:
             try:
-                func(*args, **kwargs)
+                val = func(*args, **kwargs)
+                if val:
+                    print "Returned: ", val
+                    self.update()
             except Exception, e:
                 print "Failed to run '%s(%s): %s'" % (cmd, args, e)
         else:

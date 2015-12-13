@@ -295,7 +295,7 @@ class Neato(object):
     def HibernateIfNeeded(self):
         if self.status.get("state") in ["Docked", "Idle"] and \
            (time.time() - self.statuslog.current.get("start")) > 120 and \
-           (time.time() - self._hibernated) > 120:
+           (self.statuslog.current.get("start") > self._hibernated):
             print "Hibernating..., state=%s" % self.status.get("state")
             self.Hibernate()
 

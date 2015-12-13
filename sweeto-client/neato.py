@@ -6,6 +6,7 @@ import json
 import functools
 import threading, thread
 import math
+import statuslog
 
 def wake_neato():
     #dev = "/sys/kernel/debug/gpio_debug/gpio15/"
@@ -32,7 +33,8 @@ class Neato(object):
         self.lock = threading.RLock()
         self.status = {}
         self.testmode = False
-        self._last_command = 0
+        self.statuslog = statuslog.StatusLog()
+        self._last_command = time.time()
         self._hibernated = 0
         for i in range(2):
             try:
@@ -82,7 +84,6 @@ class Neato(object):
 
     def do_command(self, cmd, requires_testmode=False):
         with self.lock:
-            self._last_command = time.time()
             if requires_testmode and not self.testmode:
                 print "Setting testmode"
                 self.TestMode(True)
@@ -133,6 +134,7 @@ class Neato(object):
         return dict(formatted)
 
     def Turn(self, deg):
+        self._last_command = time.time()
         wheel_dist = 244
         rad = -deg * math.pi / 180
         lw = wheel_dist / 2 * rad
@@ -208,6 +210,7 @@ class Neato(object):
 
 
     def Clean(self, arg=None):
+        self._last_command = time.time()
         valid_args=[None, "House", "Spot", "Stop"]
         if arg not in valid_args:
             raise Exception("Received unexpected argument: %s, expected one of %s" % (arg, valid_args))
@@ -216,22 +219,22 @@ class Neato(object):
         response = self.do_command(cmd)
         # Cleaning Mode(CD): 1
         if arg != "Stop":
-            for i in range(2):
-                for j in range(5):
+            for i in range(3):
+                for j in range(7):
                     status = self.GetStatus(True)
                     state = status.get("state")
-                    print "State: %s" % state
+                    print "State: %s (%d)" % (state, j)
                     if state == "Cleaning":
                         return response
                     time.sleep(1)
-                print "Trying once more..."
-                return self.do_command(cmd)
+                print "Trying again (%d)" % i
+                response = self.do_command(cmd)
 
     def PlaySound(self, sound):
         self.do_command("PlaySound %d" % sound)
 
     def SetMotor(self, *args, **kwargs):
-        return self.SmartDrive(*args, **kwargs)
+        return self.Drive(*args, **kwargs)
 
     def _SetMotor(self, LWheelDist = 0, RWheelDist = 0, Speed = 0, Accel = 0, RPM = 0):
         txt = "SetMotor LWheelDist %d RWheelDist %d Speed %d Accel %d RPM %d" % (LWheelDist, RWheelDist, Speed, Accel, RPM)
@@ -248,6 +251,7 @@ class Neato(object):
             time.sleep(0.5)
 
     def Drive(self, LWheelDist = 0, RWheelDist = 0, Speed = 0, Accel = 0, RPM = 0):
+        self._last_command = time.time()
         _watch_sensors = [("sensors",'LFRONTBIT'),
                           ("sensors",'LLDSBIT'),
                           ("sensors",'LSIDEBIT'),
@@ -289,13 +293,14 @@ class Neato(object):
         return self.status
 
     def HibernateIfNeeded(self):
-        if self.status.get("state") not in ["Docked", "Idle"]:
-            return
-        if (self._last_command - self._hibernated) > 120:
+        if self.status.get("state") in ["Docked", "Idle"] and \
+           (time.time() - self.statuslog.current.get("start")) > 120 and \
+           (time.time() - self._hibernated) > 120:
             print "Hibernating..., state=%s" % self.status.get("state")
             self.Hibernate()
 
-    def _UpdateStatus(self):
+
+    def _GetSensors(self):
         update = dict(error=self.GetErr(),
                       sensors=self.GetDigitalSensors(),
                       analog=self.GetAnalogSensors(),
@@ -306,6 +311,10 @@ class Neato(object):
                       lds=self.GetLDSScan(),
                       updated=time.time(),
         )
+        return update
+            
+    def _UpdateStatus(self):
+        update = self._GetSensors()
         self.status.update(update)
         state = "Idle"
         if self.status["charger"]["ExtPwrPresent"]:
@@ -313,9 +322,12 @@ class Neato(object):
         motors = self.status["motors"]
         if motors["Vacuum_RPM"] or motors["Brush_RPM"]:
             state = "Cleaning"
-        if motors['LeftWheel_Speed'] or motors['RightWheel_Speed']:
+        elif motors['LeftWheel_Speed'] or motors['RightWheel_Speed']:
             state = "Driving"
         self.status["state"] = state
+        self.statuslog.update(self.status)
+        self.status["activity"] = self.statuslog.current
+        
         self.HibernateIfNeeded()
         return self.status
 
@@ -326,15 +338,21 @@ class NeatoDummy(Neato):
             self._status_history = json.load(fd)
 
         self._current_item = 0
+        self.status = {}
+        self.statuslog = statuslog.StatusLog()
+        self._last_command = 0
+        self._hibernated = 0
+
         self._UpdateStatus()
         thread.start_new_thread(self.update_status_loop, ())
 
     def do_command(self, txt, *args):
         print("UART Write: [%s]" % txt)
 
-    def _UpdateStatus(self):
-        self.status = self._status_history[self._current_item]
+    def _GetSensors(self):
+        update = self._status_history[self._current_item]
         self._current_item = (self._current_item + 1) % len(self._status_history)
+        return update
 
 
         

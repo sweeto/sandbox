@@ -57,11 +57,12 @@ class SweetoClient:
             print "Failed to get neato status: %s" % e
             return
         if not status:
+            print "No status..."
             return
         self.client.publish("neato/status", json.dumps(status))
         ts, state, err = status.get("updated"), status.get("state"), status.get("error")
-        print "[%s] Posted update: State:'%s' Error: '%s'" % (time.strftime("%H:%M:%S", time.localtime(ts)),
-                                                              state, err)
+        #print "[%s] Posted update: State:'%s' Error: '%s'" % (time.strftime("%H:%M:%S", time.localtime(ts)),
+        #                                                      state, err)
         return status
 
     def stop(self):

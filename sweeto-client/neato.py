@@ -3,7 +3,6 @@ import sys
 import time
 import os
 import json
-import functools
 import threading, thread
 import math
 import statuslog
@@ -324,6 +323,9 @@ class Neato(object):
             state = "Cleaning"
         elif motors['LeftWheel_Speed'] or motors['RightWheel_Speed']:
             state = "Driving"
+        if len(self.status["error"]) > 0 and self.status["error"][0]:
+            state = "Error: %s" % ", ".join(self.status["error"])
+        
         self.status["state"] = state
         self.statuslog.update(self.status)
         self.status["activity"] = self.statuslog.current

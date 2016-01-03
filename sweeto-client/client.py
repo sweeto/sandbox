@@ -92,7 +92,10 @@ class SweetoClient:
         cmd = obj.get("cmd")
         args = obj.get("args", [])
         kwargs = obj.get("kwargs", {})
-        print cmd, args, kwargs
+        for key, val in kwargs.items():
+            if type(val) is unicode:
+                kwargs[key] = str(val)
+        print "Cmd=%s args=%s kwargs=%s" %(cmd, args, kwargs)
         func = getattr(self.neato, cmd)
         if func:
             try:
@@ -101,7 +104,7 @@ class SweetoClient:
                     print "Returned: ", val
                     self.update()
             except Exception, e:
-                print "Failed to run '%s(%s): %s'" % (cmd, args, e)
+                print "Failed to run '%s() args=%s kwargs=%s: %s'" % (cmd, args, kwargs, e)
         else:
             print "Could not run %s" % cmd
     

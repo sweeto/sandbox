@@ -38,8 +38,9 @@ class SweetoClient:
         self.client.loop_start()
         self._running = True
         history = []
+        max_hist = 120
+
         while self._running:
-            max_hist = 120
             self.update()
             if self.dump_file and len(history) <= max_hist:
                 history.append(status)
@@ -90,14 +91,16 @@ class SweetoClient:
             print("Could not decode json")
             return
         cmd = obj.get("cmd")
+        if cmd == "Ping":
+            return self.update()
         args = obj.get("args", [])
         kwargs = obj.get("kwargs", {})
         for key, val in kwargs.items():
             if type(val) is unicode:
                 kwargs[key] = str(val)
         print "Cmd=%s args=%s kwargs=%s" %(cmd, args, kwargs)
-        func = getattr(self.neato, cmd)
-        if func:
+        if hasattr(self.neato, cmd):
+            func = getattr(self.neato, cmd)
             try:
                 val = func(*args, **kwargs)
                 if val:
